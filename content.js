@@ -3,10 +3,13 @@
     sandboxRegex: "\\[SANDBOX\\]",
     teamRegex: "-([a-z])-",
     sandboxTeamFilter: "all",
+    teamNames: {},
     enabled: true
   };
 
   const STORAGE_KEY = "envoyerOrganizer";
+  let discoveredTeams = [];
+
   const inlineCache = {
     mode: null,
     container: null,
@@ -27,6 +30,11 @@
     const firstToken = stripped.split(/\s+/)[0] || "";
     const base = firstToken.split("-")[0];
     return base || "Production";
+  }
+
+  function getTeamLabel(team, state) {
+    if (!team || team === "Unassigned") return team || "Unassigned";
+    return (state.settings.teamNames || {})[team] || team;
   }
 
   function loadState() {
@@ -112,6 +120,14 @@
           <input id="eo-team-regex" class="eo-grow" type="text" placeholder="Team regex (capture group 1)" />
         </div>
         <div id="eo-regex-error" class="eo-muted eo-regex-error eo-hidden"></div>
+        <div class="eo-settings-label">Team names</div>
+        <div id="eo-team-names-list"></div>
+        <div class="eo-row">
+          <select id="eo-new-team-letter" class="eo-letter-select"></select>
+          <span class="eo-muted">→</span>
+          <input id="eo-new-team-name" class="eo-grow" type="text" placeholder="Display name" />
+          <button id="eo-add-team-btn">Add</button>
+        </div>
       </details>
     `;
     mountPanel(panel);
@@ -122,6 +138,10 @@
     const sandboxInput = panel.querySelector("#eo-sandbox-regex");
     const teamInput = panel.querySelector("#eo-team-regex");
     const regexError = panel.querySelector("#eo-regex-error");
+    const teamNamesList = panel.querySelector("#eo-team-names-list");
+    const newLetterSelect = panel.querySelector("#eo-new-team-letter");
+    const newNameInput = panel.querySelector("#eo-new-team-name");
+    const addTeamBtn = panel.querySelector("#eo-add-team-btn");
 
     sandboxInput.value = state.settings.sandboxRegex;
     teamInput.value = state.settings.teamRegex;
@@ -145,6 +165,94 @@
       saveState(state);
       drawLists();
     }
+
+    function refreshLetterSelect() {
+      const mapped = state.settings.teamNames || {};
+      const unmapped = discoveredTeams.filter((t) => t !== "Unassigned" && !mapped[t]);
+      newLetterSelect.innerHTML = "";
+      if (!unmapped.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = unmapped.length === 0 && discoveredTeams.length > 0
+          ? "All teams named"
+          : "No teams detected";
+        opt.disabled = true;
+        newLetterSelect.appendChild(opt);
+      } else {
+        unmapped.forEach((team) => {
+          const opt = document.createElement("option");
+          opt.value = team;
+          opt.textContent = team;
+          newLetterSelect.appendChild(opt);
+        });
+      }
+    }
+
+    function refreshTeamNamesList() {
+      teamNamesList.innerHTML = "";
+      refreshLetterSelect();
+      const names = state.settings.teamNames || {};
+      Object.keys(names).sort().forEach((letter) => {
+        const row = document.createElement("div");
+        row.className = "eo-row eo-team-name-row";
+
+        const letterSpan = document.createElement("span");
+        letterSpan.className = "eo-team-letter";
+        letterSpan.textContent = letter;
+
+        const arrow = document.createElement("span");
+        arrow.className = "eo-muted";
+        arrow.textContent = "→";
+
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "eo-grow";
+        nameInput.value = names[letter];
+        nameInput.addEventListener("change", () => {
+          const newName = normalizeText(nameInput.value);
+          if (newName) {
+            state.settings.teamNames[letter] = newName;
+          } else {
+            delete state.settings.teamNames[letter];
+          }
+          saveState(state);
+          drawLists();
+        });
+
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "×";
+        removeBtn.title = "Remove";
+        removeBtn.addEventListener("click", () => {
+          delete state.settings.teamNames[letter];
+          saveState(state);
+          refreshTeamNamesList();
+          drawLists();
+        });
+
+        row.appendChild(letterSpan);
+        row.appendChild(arrow);
+        row.appendChild(nameInput);
+        row.appendChild(removeBtn);
+        teamNamesList.appendChild(row);
+      });
+    }
+
+    function addTeamName() {
+      const letter = newLetterSelect.value;
+      const name = normalizeText(newNameInput.value);
+      if (!letter || !name) return;
+      if (!state.settings.teamNames) state.settings.teamNames = {};
+      state.settings.teamNames[letter] = name;
+      saveState(state);
+      newNameInput.value = "";
+      refreshTeamNamesList();
+      drawLists();
+    }
+
+    addTeamBtn.addEventListener("click", addTeamName);
+    newNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addTeamName();
+    });
 
     sandboxInput.addEventListener("change", applySettings);
     teamInput.addEventListener("change", applySettings);
@@ -172,6 +280,7 @@
       drawListsForState(state);
     }
 
+    refreshTeamNamesList();
     applyEnabledState(state);
   }
 
@@ -227,7 +336,7 @@
     return details;
   }
 
-  function renderInlineDashboard(prodItems, sandboxItems) {
+  function renderInlineDashboard(prodItems, sandboxItems, state) {
     captureOriginalContainer();
     if (!inlineCache.container) {
       return;
@@ -247,7 +356,7 @@
         prodDetails.appendChild(renderInlineGroupedGrid(prodItems, (item) => getProdGroup(item.svc.name)));
         root.appendChild(prodDetails);
       }
-      root.appendChild(renderInlineSandboxSection(sandboxItems));
+      root.appendChild(renderInlineSandboxSection(sandboxItems, state));
       container.appendChild(root);
     } else {
       if (prodItems.length) {
@@ -255,17 +364,17 @@
         prodDetails.appendChild(renderInlineGroupedGrid(prodItems, (item) => getProdGroup(item.svc.name)));
         container.appendChild(prodDetails);
       }
-      container.appendChild(renderInlineSandboxSection(sandboxItems));
+      container.appendChild(renderInlineSandboxSection(sandboxItems, state));
     }
   }
 
-  function renderInlineSandboxSection(items) {
+  function renderInlineSandboxSection(items, state) {
     const details = makeAccordionRoot("Sandbox", items.length);
-    details.appendChild(renderInlineAccordion(items, (item) => item.meta.team || "Unassigned"));
+    details.appendChild(renderInlineAccordion(items, (item) => item.meta.team || "Unassigned", state));
     return details;
   }
 
-  function renderInlineAccordion(items, groupFn) {
+  function renderInlineAccordion(items, groupFn, state) {
     const mode = inlineCache.mode;
     const grouped = {};
     items.forEach((item) => {
@@ -281,7 +390,8 @@
       const details = document.createElement("details");
       details.open = true;
       const summary = document.createElement("summary");
-      summary.textContent = `${group} (${grouped[group].length})`;
+      const label = getTeamLabel(group, state);
+      summary.textContent = `${label} (${grouped[group].length})`;
       details.appendChild(summary);
 
       if (mode === "card") {
@@ -462,15 +572,15 @@
 
     sandboxCandidates.forEach(({ svc, meta }) => {
       if (teamFilter !== "all") {
-        const teamName = meta.team || "Unassigned";
-        if (teamName !== teamFilter) {
+        const teamKey = meta.team || "Unassigned";
+        if (teamKey !== teamFilter) {
           return;
         }
       }
       sandbox.push({ svc, meta });
     });
 
-    renderInlineDashboard(showProduction ? prod : [], sandbox);
+    renderInlineDashboard(showProduction ? prod : [], sandbox, state);
   }
 
   function updateSandboxTeamOptionsForState(items, selectEl, state) {
@@ -480,6 +590,30 @@
     });
 
     const sortedTeams = Array.from(teams).sort();
+    discoveredTeams = sortedTeams;
+
+    const letterSelect = document.getElementById("eo-new-team-letter");
+    if (letterSelect) {
+      const mapped = state.settings.teamNames || {};
+      const unmapped = sortedTeams.filter((t) => t !== "Unassigned" && !mapped[t]);
+      const current = letterSelect.value;
+      letterSelect.innerHTML = "";
+      if (!unmapped.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = sortedTeams.length > 0 ? "All teams named" : "No teams detected";
+        opt.disabled = true;
+        letterSelect.appendChild(opt);
+      } else {
+        unmapped.forEach((team) => {
+          const opt = document.createElement("option");
+          opt.value = team;
+          opt.textContent = team;
+          letterSelect.appendChild(opt);
+        });
+        if (unmapped.includes(current)) letterSelect.value = current;
+      }
+    }
     const current = selectEl.value || state.settings.sandboxTeamFilter || "all";
 
     selectEl.innerHTML = "";
@@ -496,7 +630,7 @@
     sortedTeams.forEach((team) => {
       const option = document.createElement("option");
       option.value = team;
-      option.textContent = team;
+      option.textContent = getTeamLabel(team, state);
       selectEl.appendChild(option);
     });
 
