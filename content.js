@@ -9,6 +9,7 @@
 
   const STORAGE_KEY = "envoyerOrganizer";
   let discoveredTeams = [];
+  let isOrganizing = false;
 
   const inlineCache = {
     mode: null,
@@ -342,6 +343,7 @@
       return;
     }
 
+    isOrganizing = true;
     const container = inlineCache.container;
     const mode = inlineCache.mode;
 
@@ -366,6 +368,7 @@
       }
       container.appendChild(renderInlineSandboxSection(sandboxItems, state));
     }
+    requestAnimationFrame(() => { isOrganizing = false; });
   }
 
   function renderInlineSandboxSection(items, state) {
@@ -461,6 +464,7 @@
     if (!inlineCache.container || !inlineCache.originalChildren) {
       return;
     }
+    isOrganizing = true;
     const container = inlineCache.container;
     if (inlineCache.mode === "card") {
       container.classList.remove("eo-inline-grid");
@@ -469,6 +473,7 @@
     inlineCache.originalChildren.forEach((child) => {
       container.appendChild(child);
     });
+    requestAnimationFrame(() => { isOrganizing = false; });
   }
 
   function mountPanel(panel) {
@@ -671,15 +676,37 @@
     });
   }
 
+  function watchForContentChanges(state) {
+    const statusCard = document.querySelector("#website-status-card");
+    if (!statusCard) return;
+
+    let debounce = null;
+    const observer = new MutationObserver(() => {
+      if (isOrganizing) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        if (isOrganizing || !state.settings.enabled) return;
+        inlineCache.mode = null;
+        inlineCache.container = null;
+        inlineCache.wrappers = null;
+        inlineCache.originalChildren = null;
+        drawListsForState(state);
+      }, 500);
+    });
+
+    observer.observe(statusCard, { childList: true, subtree: true });
+  }
+
   function init() {
     if (window.location.pathname !== "/dashboard") {
       return;
     }
     loadState().then((state) => {
-      const waitTarget = "#website-status-card .grid, #website-status-card .rounded-4.shadow";
-      return waitForElement(waitTarget, 8000).then(() => {
+      return waitForElement("#website-status-card", 20000).then((el) => {
+        if (!el) return;
         renderPanel(state);
         mountFloatingToggle(state);
+        watchForContentChanges(state);
       });
     });
   }
