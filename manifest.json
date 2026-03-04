@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Envoyer Organizer",
+  "version": "0.1.0",
+  "description": "Group Envoyer services by sandbox/prod.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://envoyer.io/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://envoyer.io/dashboard"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Envoyer Organizer"
+  }
+}
