@@ -38,10 +38,6 @@
   margin: 8px auto 16px;
 }
 
-#eo-panel.eo-inline #eo-prod,
-#eo-panel.eo-inline #eo-sandbox {
-  display: none;
-}
 
 .eo-inline-grid {
   display: block !important;
@@ -100,6 +96,11 @@
 .eo-muted {
   color: var(--eo-muted);
   font-size: 12px;
+}
+
+.eo-regex-error {
+  color: var(--eo-warn);
+  margin-top: 4px;
 }
 
 .eo-section {
@@ -287,7 +288,6 @@
 
 #eo-float-toggle {
   position: fixed;
-  right: 24px;
   bottom: 28px;
   right: 80px;
   z-index: 2147483647;

@@ -2,39 +2,20 @@
   const DEFAULT_SETTINGS = {
     sandboxRegex: "\\[SANDBOX\\]",
     teamRegex: "-([a-z])-",
-    groupSandbox: true,
     sandboxTeamFilter: "all",
     enabled: true
   };
 
   const STORAGE_KEY = "envoyerOrganizer";
   const inlineCache = {
-    grid: null,
+    mode: null,
+    container: null,
     wrappers: null,
     originalChildren: null
   };
 
   function normalizeText(text) {
     return text.replace(/\s+/g, " ").trim();
-  }
-
-  function escapeHtml(str) {
-    return str.replace(/[&<>\"']/g, (ch) => {
-      switch (ch) {
-        case "&":
-          return "&amp;";
-        case "<":
-          return "&lt;";
-        case ">":
-          return "&gt;";
-        case "\"":
-          return "&quot;";
-        case "'":
-          return "&#39;";
-        default:
-          return ch;
-      }
-    });
   }
 
   function stripEnvTag(name) {
@@ -71,50 +52,6 @@
     });
   }
 
-  function collectServices() {
-    const items = [];
-    const seen = new Set();
-
-    function addItem(name, href) {
-      const cleanName = normalizeText(name || "");
-      if (!cleanName || cleanName.length < 3 || !href) {
-        return;
-      }
-
-      const key = `${cleanName}::${href}`;
-      if (seen.has(key)) {
-        return;
-      }
-
-      seen.add(key);
-      items.push({ name: cleanName, href });
-    }
-
-    const cardHeadings = Array.from(
-      document.querySelectorAll(".project-card a[href^='/projects/'] > h2")
-    );
-
-    cardHeadings.forEach((heading) => {
-      const link = heading.closest("a[href^='/projects/']");
-      if (!link) {
-        return;
-      }
-      const name = heading.textContent;
-      const href = link.getAttribute("href") || "";
-      addItem(name, href);
-    });
-
-    const dropdownLinks = Array.from(
-      document.querySelectorAll(".dropdown-menu a.dropdown-item[href^='/projects/']")
-    );
-
-    dropdownLinks.forEach((link) => {
-      addItem(link.textContent, link.getAttribute("href") || "");
-    });
-
-    return items;
-  }
-
   function buildRegex(pattern) {
     try {
       return new RegExp(pattern, "i");
@@ -148,7 +85,7 @@
     return { type: "prod", team: "" };
   }
 
-  function renderPanel(state, services) {
+  function renderPanel(state) {
     const existing = document.getElementById("eo-panel");
     if (existing) {
       existing.remove();
@@ -167,8 +104,6 @@
       <div class="eo-row">
         <span class="eo-muted">Filters apply to service names only</span>
       </div>
-      <div class="eo-section" id="eo-prod"></div>
-      <div class="eo-section" id="eo-sandbox"></div>
       <details class="eo-settings">
         <summary>Settings</summary>
         <div class="eo-row">
@@ -176,6 +111,7 @@
           <input id="eo-sandbox-regex" class="eo-grow" type="text" placeholder="Sandbox regex" />
           <input id="eo-team-regex" class="eo-grow" type="text" placeholder="Team regex (capture group 1)" />
         </div>
+        <div id="eo-regex-error" class="eo-muted eo-regex-error eo-hidden"></div>
       </details>
     `;
     mountPanel(panel);
@@ -185,6 +121,7 @@
     const disableBtn = panel.querySelector("#eo-disable");
     const sandboxInput = panel.querySelector("#eo-sandbox-regex");
     const teamInput = panel.querySelector("#eo-team-regex");
+    const regexError = panel.querySelector("#eo-regex-error");
 
     sandboxInput.value = state.settings.sandboxRegex;
     teamInput.value = state.settings.teamRegex;
@@ -195,9 +132,14 @@
       const teamRe = buildRegex(teamInput.value);
 
       if (!sandboxRe || !teamRe) {
+        regexError.textContent = !sandboxRe
+          ? "Invalid sandbox regex."
+          : "Invalid team regex.";
+        regexError.classList.remove("eo-hidden");
         return;
       }
 
+      regexError.classList.add("eo-hidden");
       state.settings.sandboxRegex = sandboxInput.value;
       state.settings.teamRegex = teamInput.value;
       saveState(state);
@@ -220,154 +162,43 @@
     disableBtn.addEventListener("click", () => {
       state.settings.enabled = false;
       saveState(state);
-      applyEnabledState(state, services);
+      applyEnabledState(state);
     });
 
     function drawLists() {
       if (!state.settings.enabled) {
         return;
       }
-      drawListsForState(state, services);
+      drawListsForState(state);
     }
 
-    function renderSection(title, items, state) {
-      const container = document.createElement("div");
-      container.innerHTML = `
-        <div class="eo-section-title">
-          <h2>${escapeHtml(title)}</h2>
-          <span class="eo-count">${items.length}</span>
-        </div>
-      `;
-
-      items.forEach(({ svc, meta }) => {
-        container.appendChild(renderItem(svc, meta, state));
-      });
-
-      return container;
-    }
-
-    function renderProductionSection(items, state) {
-      const container = document.createElement("details");
-      container.className = "eo-accordion-root";
-      container.open = true;
-      const summary = document.createElement("summary");
-      summary.className = "eo-summary-card";
-      const header = document.createElement("div");
-      header.className = "eo-section-title";
-      header.innerHTML = `
-        <h2>Production</h2>
-        <span class="eo-count">${items.length}</span>
-      `;
-      summary.appendChild(header);
-      container.appendChild(summary);
-      container.appendChild(renderGroupedList(items, (item) => getProdGroup(item.svc.name), state));
-      return container;
-    }
-
-    function renderSandboxSection(items, state) {
-      const container = document.createElement("details");
-      container.className = "eo-accordion-root";
-      container.open = true;
-      const summary = document.createElement("summary");
-      summary.className = "eo-summary-card";
-      const header = document.createElement("div");
-      header.className = "eo-section-title";
-      header.innerHTML = `
-        <h2>Sandbox</h2>
-        <span class="eo-count">${items.length}</span>
-      `;
-      summary.appendChild(header);
-      container.appendChild(summary);
-
-      const grouped = {};
-      items.forEach(({ svc, meta }) => {
-        const team = meta.team || "Unassigned";
-        grouped[team] = grouped[team] || [];
-        grouped[team].push({ svc, meta });
-      });
-
-      const accordion = document.createElement("div");
-      accordion.className = "eo-accordion";
-
-      Object.keys(grouped).sort().forEach((team) => {
-        const details = document.createElement("details");
-        details.open = true;
-        const summary = document.createElement("summary");
-        summary.textContent = `${team} (${grouped[team].length})`;
-        details.appendChild(summary);
-        grouped[team].forEach(({ svc, meta }) => {
-          details.appendChild(renderItem(svc, meta, state));
-        });
-        accordion.appendChild(details);
-      });
-
-      container.appendChild(accordion);
-      return container;
-    }
-
-    function renderItem(service, meta, state) {
-      const item = document.createElement("div");
-      item.className = "eo-item";
-
-      const link = document.createElement("a");
-      link.href = service.href;
-      link.textContent = service.name;
-
-      const tag = document.createElement("span");
-      tag.className = "eo-tag";
-      tag.textContent = meta.type === "sandbox" ? "Sandbox" : "Prod";
-      if (meta.team) {
-        tag.textContent += `:${meta.team}`;
-      }
-
-      tag.addEventListener("click", () => {
-        const current = state.overrides[service.name] || {};
-        const nextType = meta.type === "sandbox" ? "prod" : "sandbox";
-        state.overrides[service.name] = Object.assign({}, current, {
-          type: nextType
-        });
-        saveState(state);
-        drawLists();
-      });
-
-      item.appendChild(link);
-      item.appendChild(tag);
-      return item;
-    }
-
-    applyEnabledState(state, services);
+    applyEnabledState(state);
   }
 
-  function updateOriginalListVisibility(hide) {
-    const containers = Array.from(document.querySelectorAll("main, .container, #app"));
-    containers.forEach((el) => {
-      if (!el.dataset.eoOriginal) {
-        el.dataset.eoOriginal = "true";
-      }
-      if (hide) {
-        el.classList.add("eo-hidden");
-      } else {
-        el.classList.remove("eo-hidden");
-      }
-    });
-  }
-
-  function captureOriginalGrid() {
-    if (inlineCache.grid) {
+  function captureOriginalContainer() {
+    if (inlineCache.container) {
       return;
     }
     const grid = document.querySelector("#website-status-card .grid");
-    if (!grid) {
+    if (grid) {
+      inlineCache.mode = "card";
+      inlineCache.container = grid;
+      inlineCache.wrappers = Array.from(grid.querySelectorAll(".g-col-6"));
+      inlineCache.originalChildren = Array.from(grid.children);
       return;
     }
-    inlineCache.grid = grid;
-    inlineCache.wrappers = Array.from(grid.querySelectorAll(".g-col-6"));
-    inlineCache.originalChildren = Array.from(grid.children);
+    const listRoot = document.querySelector("#website-status-card .rounded-4.shadow");
+    if (listRoot) {
+      inlineCache.mode = "list";
+      inlineCache.container = listRoot;
+      inlineCache.wrappers = Array.from(listRoot.querySelectorAll(":scope > .border-bottom"));
+      inlineCache.originalChildren = Array.from(listRoot.children);
+    }
   }
 
   function collectInlineServices() {
-    captureOriginalGrid();
-    if (!inlineCache.wrappers) {
+    captureOriginalContainer();
+    if (!inlineCache.container || !inlineCache.wrappers) {
       return [];
     }
     return inlineCache.wrappers.map((wrapper) => {
@@ -382,73 +213,60 @@
     }).filter(Boolean);
   }
 
-  function renderInlineDashboard(prodItems, sandboxItems) {
-    captureOriginalGrid();
-    if (!inlineCache.grid) {
-      return;
-    }
-
-    const grid = inlineCache.grid;
-
-    grid.classList.add("eo-inline-grid");
-    grid.innerHTML = "";
-
-    const root = document.createElement("div");
-    root.className = "eo-inline-root";
-    if (prodItems.length) {
-      const prodDetails = document.createElement("details");
-      prodDetails.className = "eo-accordion-root";
-      prodDetails.open = true;
-      const prodSummary = document.createElement("summary");
-      prodSummary.className = "eo-summary-card";
-      const prodHeader = document.createElement("div");
-      prodHeader.className = "eo-section-title";
-      prodHeader.innerHTML = `
-        <h2>Production</h2>
-        <span class="eo-count">${prodItems.length}</span>
-      `;
-      prodSummary.appendChild(prodHeader);
-      prodDetails.appendChild(prodSummary);
-      prodDetails.appendChild(renderInlineGroupedGrid(prodItems, (item) => getProdGroup(item.svc.name)));
-      root.appendChild(prodDetails);
-    }
-
-    root.appendChild(renderInlineSandboxSection(sandboxItems));
-    grid.appendChild(root);
-  }
-
-  function renderInlineSandboxSection(items) {
-    const container = document.createElement("details");
-    container.className = "eo-accordion-root";
-    container.open = true;
+  function makeAccordionRoot(title, count) {
+    const details = document.createElement("details");
+    details.className = "eo-accordion-root";
+    details.open = true;
     const summary = document.createElement("summary");
     summary.className = "eo-summary-card";
     const header = document.createElement("div");
     header.className = "eo-section-title";
-    header.innerHTML = `
-      <h2>Sandbox</h2>
-      <span class="eo-count">${items.length}</span>
-    `;
+    header.innerHTML = `<h2>${title}</h2><span class="eo-count">${count}</span>`;
     summary.appendChild(header);
-    container.appendChild(summary);
-    container.appendChild(renderInlineAccordion(items, (item) => item.meta.team || "Unassigned"));
-    return container;
+    details.appendChild(summary);
+    return details;
   }
 
-  function renderInlineGroup(title, items, groupFn) {
-    const container = document.createElement("div");
-    const header = document.createElement("div");
-    header.className = "eo-section-title";
-    header.innerHTML = `
-      <h2>${escapeHtml(title)}</h2>
-      <span class="eo-count">${items.length}</span>
-    `;
-    container.appendChild(header);
-    container.appendChild(renderInlineAccordion(items, groupFn));
-    return container;
+  function renderInlineDashboard(prodItems, sandboxItems) {
+    captureOriginalContainer();
+    if (!inlineCache.container) {
+      return;
+    }
+
+    const container = inlineCache.container;
+    const mode = inlineCache.mode;
+
+    container.innerHTML = "";
+
+    if (mode === "card") {
+      container.classList.add("eo-inline-grid");
+      const root = document.createElement("div");
+      root.className = "eo-inline-root";
+      if (prodItems.length) {
+        const prodDetails = makeAccordionRoot("Production", prodItems.length);
+        prodDetails.appendChild(renderInlineGroupedGrid(prodItems, (item) => getProdGroup(item.svc.name)));
+        root.appendChild(prodDetails);
+      }
+      root.appendChild(renderInlineSandboxSection(sandboxItems));
+      container.appendChild(root);
+    } else {
+      if (prodItems.length) {
+        const prodDetails = makeAccordionRoot("Production", prodItems.length);
+        prodDetails.appendChild(renderInlineGroupedGrid(prodItems, (item) => getProdGroup(item.svc.name)));
+        container.appendChild(prodDetails);
+      }
+      container.appendChild(renderInlineSandboxSection(sandboxItems));
+    }
+  }
+
+  function renderInlineSandboxSection(items) {
+    const details = makeAccordionRoot("Sandbox", items.length);
+    details.appendChild(renderInlineAccordion(items, (item) => item.meta.team || "Unassigned"));
+    return details;
   }
 
   function renderInlineAccordion(items, groupFn) {
+    const mode = inlineCache.mode;
     const grouped = {};
     items.forEach((item) => {
       const key = groupFn(item) || "";
@@ -466,16 +284,19 @@
       summary.textContent = `${group} (${grouped[group].length})`;
       details.appendChild(summary);
 
-      const groupGrid = document.createElement("div");
-      groupGrid.className = "grid";
+      if (mode === "card") {
+        const groupGrid = document.createElement("div");
+        groupGrid.className = "grid";
+        grouped[group].forEach(({ svc }) => {
+          if (svc.wrapper) groupGrid.appendChild(svc.wrapper);
+        });
+        details.appendChild(groupGrid);
+      } else {
+        grouped[group].forEach(({ svc }) => {
+          if (svc.wrapper) details.appendChild(svc.wrapper);
+        });
+      }
 
-      grouped[group].forEach(({ svc }) => {
-        if (svc.wrapper) {
-          groupGrid.appendChild(svc.wrapper);
-        }
-      });
-
-      details.appendChild(groupGrid);
       accordion.appendChild(details);
     });
 
@@ -483,6 +304,7 @@
   }
 
   function renderInlineGroupedGrid(items, groupFn) {
+    const mode = inlineCache.mode;
     const grouped = {};
     items.forEach((item) => {
       const key = groupFn(item) || "";
@@ -499,65 +321,43 @@
       const header = document.createElement("div");
       header.className = "eo-group-title";
       header.textContent = `${group} (${grouped[group].length})`;
-      const groupGrid = document.createElement("div");
-      groupGrid.className = "grid eo-group-body";
 
-      grouped[group].forEach(({ svc }) => {
-        if (svc.wrapper) {
-          groupGrid.appendChild(svc.wrapper);
-        }
-      });
+      if (mode === "card") {
+        const groupGrid = document.createElement("div");
+        groupGrid.className = "grid eo-group-body";
+        grouped[group].forEach(({ svc }) => {
+          if (svc.wrapper) groupGrid.appendChild(svc.wrapper);
+        });
+        block.appendChild(header);
+        block.appendChild(groupGrid);
+      } else {
+        const groupBody = document.createElement("div");
+        groupBody.className = "eo-group-body";
+        grouped[group].forEach(({ svc }) => {
+          if (svc.wrapper) groupBody.appendChild(svc.wrapper);
+        });
+        block.appendChild(header);
+        block.appendChild(groupBody);
+      }
 
-      block.appendChild(header);
-      block.appendChild(groupGrid);
       container.appendChild(block);
     });
 
     return container;
   }
 
-  function renderGroupedList(items, groupFn, state) {
-    const grouped = {};
-    items.forEach((item) => {
-      const key = groupFn(item) || "";
-      grouped[key] = grouped[key] || [];
-      grouped[key].push(item);
-    });
-
-    const container = document.createElement("div");
-    container.className = "eo-grouped";
-
-    Object.keys(grouped).sort().forEach((group) => {
-      const block = document.createElement("div");
-      block.className = "eo-group-block";
-      const header = document.createElement("div");
-      header.className = "eo-group-title";
-      header.textContent = `${group} (${grouped[group].length})`;
-      const body = document.createElement("div");
-      body.className = "eo-group-body";
-
-      grouped[group].forEach(({ svc, meta }) => {
-        body.appendChild(renderItem(svc, meta, state));
-      });
-
-      block.appendChild(header);
-      block.appendChild(body);
-      container.appendChild(block);
-    });
-
-    return container;
-  }
-
-  function restoreOriginalGrid() {
-    captureOriginalGrid();
-    if (!inlineCache.grid || !inlineCache.originalChildren) {
+  function restoreOriginalContainer() {
+    captureOriginalContainer();
+    if (!inlineCache.container || !inlineCache.originalChildren) {
       return;
     }
-    const grid = inlineCache.grid;
-    grid.classList.remove("eo-inline-grid");
-    grid.innerHTML = "";
+    const container = inlineCache.container;
+    if (inlineCache.mode === "card") {
+      container.classList.remove("eo-inline-grid");
+    }
+    container.innerHTML = "";
     inlineCache.originalChildren.forEach((child) => {
-      grid.appendChild(child);
+      container.appendChild(child);
     });
   }
 
@@ -577,7 +377,7 @@
     document.body.appendChild(panel);
   }
 
-  function mountFloatingToggle(state, services) {
+  function mountFloatingToggle(state) {
     const existing = document.getElementById("eo-float-toggle");
     if (existing) {
       existing.remove();
@@ -589,7 +389,7 @@
     btn.addEventListener("click", () => {
       state.settings.enabled = true;
       saveState(state);
-      applyEnabledState(state, services);
+      applyEnabledState(state);
     });
     if (state.settings.enabled) {
       btn.classList.add("eo-hidden");
@@ -597,12 +397,12 @@
     document.body.appendChild(btn);
   }
 
-  function applyEnabledState(state, services) {
+  function applyEnabledState(state) {
     const panel = document.getElementById("eo-panel");
     const floatBtn = document.getElementById("eo-float-toggle");
 
     if (!state.settings.enabled) {
-      restoreOriginalGrid();
+      restoreOriginalContainer();
       if (panel) {
         panel.classList.add("eo-hidden");
       }
@@ -618,12 +418,12 @@
     if (floatBtn) {
       floatBtn.classList.add("eo-hidden");
     }
-    drawListsForState(state, services);
+    drawListsForState(state);
   }
 
-  function drawListsForState(state, services) {
+  function drawListsForState(state) {
     if (!state.settings.enabled) {
-      restoreOriginalGrid();
+      restoreOriginalContainer();
       return;
     }
     const panel = document.getElementById("eo-panel");
@@ -742,11 +542,10 @@
       return;
     }
     loadState().then((state) => {
-      const waitTarget = "#website-status-card .grid";
+      const waitTarget = "#website-status-card .grid, #website-status-card .rounded-4.shadow";
       return waitForElement(waitTarget, 8000).then(() => {
-        const services = collectServices();
-        renderPanel(state, services);
-        mountFloatingToggle(state, services);
+        renderPanel(state);
+        mountFloatingToggle(state);
       });
     });
   }
